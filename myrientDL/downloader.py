@@ -5,6 +5,7 @@ import time
 from typing import Optional, Dict, Callable, Any
 from pathlib import Path
 import math
+from datetime import datetime
 
 import httpx
 from anyio import create_task_group, CapacityLimiter
@@ -73,7 +74,9 @@ class DownloadManager:
         self.session = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=self.config.timeouts.connect,
-                read=self.config.timeouts.read
+                read=self.config.timeouts.read,
+                write=30.0,
+                pool=30.0
             ),
             headers={
                 "User-Agent": self.config.user_agent
@@ -142,7 +145,7 @@ class DownloadManager:
                 
                 if success:
                     game_file.status = DownloadStatus.COMPLETED
-                    game_file.completed_at = game_file.completed_at or time.time()
+                    game_file.completed_at = game_file.completed_at or datetime.now()
                     await self.database.update_game_file(game_file)
                     self.download_stats["completed_downloads"] += 1
                     return True
