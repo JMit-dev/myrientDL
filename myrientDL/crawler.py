@@ -29,7 +29,9 @@ class MyrientCrawler:
         self.session = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=self.config.timeouts.connect,
-                read=self.config.timeouts.read
+                read=self.config.timeouts.read,
+                write=30.0,
+                pool=30.0
             ),
             headers={
                 "User-Agent": self.config.user_agent

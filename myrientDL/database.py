@@ -11,6 +11,12 @@ class Database:
     def __init__(self, db_path: Path):
         self.db_path = db_path
     
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+    
     async def init_db(self):
         """Initialize the database with required tables"""
         async with aiosqlite.connect(self.db_path) as db:
