@@ -100,7 +100,17 @@ async def search_command(
             console.print("[yellow]No games found in database. Run 'myrient-dl crawl' first.[/yellow]")
             return
         
-        results = await search_engine.search(query, console_filter, limit)
+        # Use direct database search which works better
+        db_results = await db.search_games(query, limit)
+        
+        # Convert to SearchResult format
+        from .search import SearchResult
+        results = [SearchResult(
+            game_file=game,
+            score=90,
+            match_type="database",
+            matched_field="name"
+        ) for game in db_results]
         
         if not results:
             console.print(f"[red]No results found for '{query}'[/red]")
