@@ -146,6 +146,11 @@ class DownloadManager:
                 if success:
                     game_file.status = DownloadStatus.COMPLETED
                     game_file.completed_at = game_file.completed_at or datetime.now()
+                    
+                    # Final progress callback to ensure 100% completion
+                    for callback in self.progress_callbacks:
+                        callback(game_file, game_file.bytes_downloaded, game_file.size or game_file.bytes_downloaded)
+                    
                     await self.database.update_game_file(game_file)
                     self.download_stats["completed_downloads"] += 1
                     return True

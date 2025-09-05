@@ -329,7 +329,9 @@ async def download_games(games: List[GameFile], config: MyrientConfig):
                 def update_progress(game_file: GameFile, downloaded: int, total: int):
                     if game_file.url in progress_data:
                         task_id = progress_data[game_file.url]
-                        progress.update(task_id, completed=downloaded, total=total or 100)
+                        # Use the total from the callback if available, otherwise keep the original game size
+                        actual_total = total or game_file.size or 100
+                        progress.update(task_id, completed=downloaded, total=actual_total)
                 
                 manager.add_progress_callback(update_progress)
                 
