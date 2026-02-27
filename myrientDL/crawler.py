@@ -9,7 +9,7 @@ from datetime import datetime
 import httpx
 from selectolax.parser import HTMLParser
 
-from .models import GameFile, CrawlResult, DownloadStatus
+from .models import GameFile, CrawlResult, DownloadStatus, Collection, FileFormat
 from .config import MyrientConfig
 
 
@@ -113,17 +113,25 @@ class MyrientCrawler:
                         size = self._parse_file_size(size_text)
                         break
                 
-                # Create GameFile object
+                # Extract metadata
+                parent_path = self._extract_parent_path(base_url)
+                file_ext = Path(filename).suffix.lstrip('.').lower()
+
+                # Create GameFile object with enhanced metadata
                 game_file = GameFile(
                     url=full_url,
                     name=filename,
                     size=size,
-                    parent_path=self._extract_parent_path(base_url),
-                    file_type=Path(filename).suffix.lstrip('.').lower(),
+                    parent_path=parent_path,
+                    file_type=file_ext,
                     console=self._extract_console(base_url),
-                    region=self._extract_region(filename)
+                    region=self._extract_region(filename),
+                    collection=self._extract_collection(parent_path),
+                    collection_update_frequency=self._get_collection_update_frequency(parent_path),
+                    file_format=self._determine_file_format(file_ext),
+                    requires_conversion=self._requires_conversion(file_ext)
                 )
-                
+
                 files.append(game_file)
         
         return files, subdirs
@@ -247,7 +255,95 @@ class MyrientCrawler:
             if match:
                 return match.group(1)
         return None
-    
+
+    def _extract_collection(self, parent_path: str) -> Collection:
+        """Extract collection from parent path"""
+        path_lower = parent_path.lower()
+
+        # Map path prefixes to collections
+        if path_lower.startswith("no-intro"):
+            return Collection.NO_INTRO
+        elif path_lower.startswith("redump"):
+            return Collection.REDUMP
+        elif path_lower.startswith("mame") and "homebrew" not in path_lower:
+            return Collection.MAME
+        elif path_lower.startswith("hbmame") or "homebrew" in path_lower:
+            return Collection.HBMAME
+        elif path_lower.startswith("tosec-iso"):
+            return Collection.TOSEC_ISO
+        elif path_lower.startswith("tosec-pix"):
+            return Collection.TOSEC_PIX
+        elif path_lower.startswith("tosec"):
+            return Collection.TOSEC
+        elif "finalburn" in path_lower or "fbneo" in path_lower:
+            return Collection.FBNEO
+        elif "teknoparrot" in path_lower:
+            return Collection.TEKNOPARROT
+        elif "total dos" in path_lower or "dos collection" in path_lower:
+            return Collection.TOTAL_DOS
+        elif "laserdisc" in path_lower:
+            return Collection.LASERDISC
+        elif "lost levels" in path_lower:
+            return Collection.LOST_LEVELS
+        elif "hardware target" in path_lower or "htgd" in path_lower:
+            return Collection.HTGD
+        elif "retroachievements" in path_lower:
+            return Collection.RETRO_ACHIEVEMENTS
+        elif "t-en" in path_lower or "english translation" in path_lower:
+            return Collection.T_EN
+        elif "touhou" in path_lower:
+            return Collection.TOUHOU
+        elif "eggman" in path_lower or "arcade repository" in path_lower:
+            return Collection.EGGMAN
+        elif "internet archive" in path_lower:
+            return Collection.INTERNET_ARCHIVE
+        elif "miscellaneous" in path_lower or "misc" in path_lower:
+            return Collection.MISCELLANEOUS
+        elif "bitsavers" in path_lower:
+            return Collection.BITSAVERS
+        elif "exo" in path_lower:
+            return Collection.EXO
+
+        return Collection.UNKNOWN
+
+    def _get_collection_update_frequency(self, parent_path: str) -> str:
+        """Get update frequency for a collection"""
+        collection = self._extract_collection(parent_path)
+
+        # Map collections to update frequencies
+        frequency_map = {
+            Collection.BITSAVERS: "Daily",
+            Collection.INTERNET_ARCHIVE: "On request",
+            Collection.MISCELLANEOUS: "On request",
+            Collection.EXO: "On request",
+        }
+
+        return frequency_map.get(collection, "Weekly")
+
+    def _determine_file_format(self, file_ext: str) -> Optional[FileFormat]:
+        """Determine FileFormat enum from file extension"""
+        format_map = {
+            "zip": FileFormat.ZIP,
+            "7z": FileFormat.SEVEN_Z,
+            "rar": FileFormat.RAR,
+            "iso": FileFormat.ISO,
+            "bin": FileFormat.BIN_CUE,
+            "cue": FileFormat.BIN_CUE,
+            "rvz": FileFormat.RVZ,
+            "wux": FileFormat.WUX,
+            "chd": FileFormat.CHD,
+            "gcz": FileFormat.GCZ,
+            "nki": FileFormat.NKI,
+            "wbfs": FileFormat.WBF,
+        }
+
+        return format_map.get(file_ext.lower(), FileFormat.OTHER)
+
+    def _requires_conversion(self, file_ext: str) -> bool:
+        """Check if file format requires conversion"""
+        conversion_formats = {"rvz", "wux"}
+        return file_ext.lower() in conversion_formats
+
     async def get_robots_txt(self, base_url: str) -> Optional[str]:
         """Fetch robots.txt for the domain"""
         try:
