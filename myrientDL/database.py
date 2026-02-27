@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 
-from .models import GameFile, DownloadStatus
+from .models import GameFile, DownloadStatus, Collection, FileFormat
 
 
 class Database:
@@ -30,17 +30,26 @@ class Database:
                     file_type TEXT NOT NULL,
                     console TEXT,
                     region TEXT,
+                    collection TEXT DEFAULT 'Unknown',
+                    collection_update_frequency TEXT,
+                    file_format TEXT,
+                    requires_conversion INTEGER DEFAULT 0,
+                    is_torrentzipped INTEGER DEFAULT 0,
+                    torrentzip_crc32 TEXT,
                     checksum TEXT,
                     checksum_type TEXT,
                     last_modified TEXT,
                     etag TEXT,
+                    is_recent_upload INTEGER DEFAULT 0,
                     status TEXT CHECK(status IN ('pending','downloading','completed','failed','paused')) DEFAULT 'pending',
                     local_path TEXT,
                     bytes_downloaded INTEGER DEFAULT 0,
                     download_attempts INTEGER DEFAULT 0,
                     error_message TEXT,
                     added_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    completed_at TEXT
+                    completed_at TEXT,
+                    average_download_speed REAL,
+                    is_speed_limited INTEGER DEFAULT 0
                 )
             """)
             
@@ -62,7 +71,9 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_console ON game_files(console)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_name ON game_files(name)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_parent_path ON game_files(parent_path)")
-            
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_collection ON game_files(collection)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_file_format ON game_files(file_format)")
+
             await db.commit()
     
     async def add_game_file(self, game_file: GameFile) -> bool:
@@ -72,20 +83,28 @@ class Database:
                 await db.execute("""
                     INSERT INTO game_files (
                         url, name, size, parent_path, file_type, console, region,
-                        checksum, checksum_type, last_modified, etag, status,
-                        local_path, bytes_downloaded, download_attempts, error_message,
-                        added_at, completed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        collection, collection_update_frequency, file_format,
+                        requires_conversion, is_torrentzipped, torrentzip_crc32,
+                        checksum, checksum_type, last_modified, etag, is_recent_upload,
+                        status, local_path, bytes_downloaded, download_attempts, error_message,
+                        added_at, completed_at, average_download_speed, is_speed_limited
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     game_file.url, game_file.name, game_file.size, game_file.parent_path,
                     game_file.file_type, game_file.console, game_file.region,
-                    game_file.checksum, game_file.checksum_type, 
+                    game_file.collection.value, game_file.collection_update_frequency,
+                    game_file.file_format.value if game_file.file_format else None,
+                    int(game_file.requires_conversion), int(game_file.is_torrentzipped),
+                    game_file.torrentzip_crc32,
+                    game_file.checksum, game_file.checksum_type,
                     game_file.last_modified.isoformat() if game_file.last_modified else None,
-                    game_file.etag, game_file.status.value,
+                    game_file.etag, int(game_file.is_recent_upload),
+                    game_file.status.value,
                     str(game_file.local_path) if game_file.local_path else None,
                     game_file.bytes_downloaded, game_file.download_attempts, game_file.error_message,
-                    game_file.added_at.isoformat(), 
-                    game_file.completed_at.isoformat() if game_file.completed_at else None
+                    game_file.added_at.isoformat(),
+                    game_file.completed_at.isoformat() if game_file.completed_at else None,
+                    game_file.average_download_speed, int(game_file.is_speed_limited)
                 ))
                 await db.commit()
                 return True
@@ -98,18 +117,27 @@ class Database:
             await db.execute("""
                 UPDATE game_files SET
                     name=?, size=?, parent_path=?, file_type=?, console=?, region=?,
-                    checksum=?, checksum_type=?, last_modified=?, etag=?, status=?,
-                    local_path=?, bytes_downloaded=?, download_attempts=?, error_message=?,
-                    completed_at=?
+                    collection=?, collection_update_frequency=?, file_format=?,
+                    requires_conversion=?, is_torrentzipped=?, torrentzip_crc32=?,
+                    checksum=?, checksum_type=?, last_modified=?, etag=?, is_recent_upload=?,
+                    status=?, local_path=?, bytes_downloaded=?, download_attempts=?, error_message=?,
+                    completed_at=?, average_download_speed=?, is_speed_limited=?
                 WHERE url=?
             """, (
                 game_file.name, game_file.size, game_file.parent_path, game_file.file_type,
-                game_file.console, game_file.region, game_file.checksum, game_file.checksum_type,
+                game_file.console, game_file.region,
+                game_file.collection.value, game_file.collection_update_frequency,
+                game_file.file_format.value if game_file.file_format else None,
+                int(game_file.requires_conversion), int(game_file.is_torrentzipped),
+                game_file.torrentzip_crc32,
+                game_file.checksum, game_file.checksum_type,
                 game_file.last_modified.isoformat() if game_file.last_modified else None,
-                game_file.etag, game_file.status.value,
+                game_file.etag, int(game_file.is_recent_upload),
+                game_file.status.value,
                 str(game_file.local_path) if game_file.local_path else None,
                 game_file.bytes_downloaded, game_file.download_attempts, game_file.error_message,
                 game_file.completed_at.isoformat() if game_file.completed_at else None,
+                game_file.average_download_speed, int(game_file.is_speed_limited),
                 game_file.url
             ))
             await db.commit()
@@ -171,6 +199,29 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [row[0] for row in rows]
+
+    async def get_collections(self) -> List[str]:
+        """Get list of unique collections"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT DISTINCT collection FROM game_files WHERE collection IS NOT NULL ORDER BY collection"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row[0] for row in rows]
+
+    async def get_games_by_collection(self, collection: str, limit: Optional[int] = None) -> List[GameFile]:
+        """Get all games from a specific collection"""
+        query = "SELECT * FROM game_files WHERE collection=? ORDER BY name"
+        params = [collection]
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                return [self._row_to_game_file(row) for row in rows]
     
     async def get_stats(self) -> Dict[str, Any]:
         """Get download statistics"""
@@ -211,15 +262,24 @@ class Database:
             file_type=row[5],
             console=row[6],
             region=row[7],
-            checksum=row[8],
-            checksum_type=row[9],
-            last_modified=datetime.fromisoformat(row[10]) if row[10] else None,
-            etag=row[11],
-            status=DownloadStatus(row[12]),
-            local_path=Path(row[13]) if row[13] else None,
-            bytes_downloaded=row[14],
-            download_attempts=row[15],
-            error_message=row[16],
-            added_at=datetime.fromisoformat(row[17]),
-            completed_at=datetime.fromisoformat(row[18]) if row[18] else None,
+            collection=Collection(row[8]) if row[8] else Collection.UNKNOWN,
+            collection_update_frequency=row[9],
+            file_format=FileFormat(row[10]) if row[10] else None,
+            requires_conversion=bool(row[11]),
+            is_torrentzipped=bool(row[12]),
+            torrentzip_crc32=row[13],
+            checksum=row[14],
+            checksum_type=row[15],
+            last_modified=datetime.fromisoformat(row[16]) if row[16] else None,
+            etag=row[17],
+            is_recent_upload=bool(row[18]),
+            status=DownloadStatus(row[19]),
+            local_path=Path(row[20]) if row[20] else None,
+            bytes_downloaded=row[21],
+            download_attempts=row[22],
+            error_message=row[23],
+            added_at=datetime.fromisoformat(row[24]),
+            completed_at=datetime.fromisoformat(row[25]) if row[25] else None,
+            average_download_speed=row[26],
+            is_speed_limited=bool(row[27])
         )
