@@ -10,7 +10,7 @@ from datetime import datetime
 import httpx
 from anyio import create_task_group, CapacityLimiter
 
-from .models import GameFile, DownloadStatus
+from .models import GameFile, DownloadStatus, DownloadWarning
 from .config import MyrientConfig
 from .database import Database
 
@@ -66,7 +66,11 @@ class DownloadManager:
             "total_bytes_downloaded": 0,
             "start_time": None,
         }
-        
+
+        # Speed monitoring for abuse detection
+        self.warnings: list[DownloadWarning] = []
+        self.speed_samples: list[tuple[float, float]] = []  # (timestamp, bytes_per_second)
+
         # HTTP client
         self.session: Optional[httpx.AsyncClient] = None
     
@@ -236,20 +240,50 @@ class DownloadManager:
                 async with aiofiles.open(temp_path, "ab" if start_pos > 0 else "wb") as f:
                     downloaded_this_session = 0
                     last_progress_update = time.time()
-                    
+                    session_start_time = time.time()
+                    speed_check_start = time.time()
+                    speed_check_bytes = 0
+
                     async for chunk in response.aiter_bytes(8192):
                         await f.write(chunk)
                         hasher.update(chunk)
-                        
+
                         downloaded_this_session += len(chunk)
                         game_file.bytes_downloaded += len(chunk)
-                        
+                        speed_check_bytes += len(chunk)
+
                         # Update progress periodically
                         current_time = time.time()
                         if current_time - last_progress_update > 1.0:  # Update every second
+                            # Calculate current speed
+                            elapsed = current_time - speed_check_start
+                            if elapsed > 0:
+                                current_speed = speed_check_bytes / elapsed
+                                self.speed_samples.append((current_time, current_speed))
+
+                                # Keep only last 10 samples
+                                if len(self.speed_samples) > 10:
+                                    self.speed_samples.pop(0)
+
+                                # Calculate average speed
+                                if self.speed_samples:
+                                    avg_speed = sum(s[1] for s in self.speed_samples) / len(self.speed_samples)
+                                    game_file.average_download_speed = avg_speed
+
+                                    # Check for speed limiting (Myrient throttles to ~10 KB/s)
+                                    if 8_000 <= avg_speed <= 12_000:
+                                        game_file.is_speed_limited = True
+                                        warning = DownloadWarning.speed_limit_warning(game_file.url)
+                                        if warning not in self.warnings:
+                                            self.warnings.append(warning)
+
+                                # Reset speed check
+                                speed_check_start = current_time
+                                speed_check_bytes = 0
+
                             for callback in self.progress_callbacks:
                                 callback(game_file, game_file.bytes_downloaded, game_file.size or 0)
-                            
+
                             # Update database
                             await self.database.update_game_file(game_file)
                             last_progress_update = current_time
@@ -320,5 +354,24 @@ class DownloadManager:
         speed = self.get_download_speed()
         if speed <= 0:
             return None
-        
+
         return int(remaining_bytes / speed)
+
+    def get_warnings(self) -> list[DownloadWarning]:
+        """Get all warnings generated during downloads"""
+        return self.warnings.copy()
+
+    def clear_warnings(self):
+        """Clear all warnings"""
+        self.warnings.clear()
+
+    def is_speed_throttled(self) -> bool:
+        """Check if downloads appear to be throttled"""
+        if len(self.speed_samples) < 3:
+            return False
+
+        recent_speeds = [s[1] for s in self.speed_samples[-5:]]
+        avg_recent = sum(recent_speeds) / len(recent_speeds)
+
+        # Myrient throttles abusive downloads to ~10 KB/s
+        return 8_000 <= avg_recent <= 12_000
