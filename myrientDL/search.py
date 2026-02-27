@@ -3,7 +3,7 @@ import re
 from fuzzywuzzy import fuzz, process
 from dataclasses import dataclass
 
-from .models import GameFile
+from .models import GameFile, Collection
 from .database import Database
 
 
@@ -66,36 +66,43 @@ class GameSearch:
         self,
         query: str,
         console: Optional[str] = None,
+        collection: Optional[Collection] = None,
         limit: int = 50,
         min_score: int = 60
     ) -> List[SearchResult]:
         """
         Perform fuzzy search for games
-        
+
         Args:
             query: Search query (game name, partial name, etc.)
             console: Filter by console (optional)
+            collection: Filter by collection (optional)
             limit: Maximum number of results
             min_score: Minimum fuzzy match score (0-100)
         """
         results = []
-        
+
         # Get all games (filtered by console if specified)
         all_games = await self.database.get_game_files(console=console, limit=None)
-        
+
+        # Filter by collection if specified
+        if collection:
+            all_games = [g for g in all_games if g.collection == collection]
+
         if not all_games:
             return results
-        
+
         # Normalize query
         normalized_query = self._normalize_text(query)
-        
+
         # Try different search strategies
         results.extend(await self._exact_search(normalized_query, all_games))
         results.extend(await self._fuzzy_search(normalized_query, all_games, min_score))
         results.extend(await self._partial_search(normalized_query, all_games, min_score))
         results.extend(await self._console_search(query, all_games))
         results.extend(await self._region_search(query, all_games))
-        
+        results.extend(await self._collection_search(query, all_games))
+
         # Remove duplicates and sort by score
         unique_results = {}
         for result in results:
@@ -212,14 +219,14 @@ class GameSearch:
         """Search by region"""
         results = []
         normalized_query = self._normalize_text(query)
-        
+
         region_keywords = ["usa", "europe", "japan", "world", "en", "fr", "de", "es", "it"]
-        
+
         if any(keyword in normalized_query for keyword in region_keywords):
             for game in games:
                 if game.region:
                     normalized_region = self._normalize_text(game.region)
-                    
+
                     if normalized_query in normalized_region or normalized_region in normalized_query:
                         results.append(SearchResult(
                             game_file=game,
@@ -227,7 +234,35 @@ class GameSearch:
                             match_type="partial",
                             matched_field="region"
                         ))
-        
+
+        return results
+
+    async def _collection_search(self, query: str, games: List[GameFile]) -> List[SearchResult]:
+        """Search by collection name"""
+        results = []
+        normalized_query = self._normalize_text(query)
+
+        collection_keywords = {
+            "no-intro": Collection.NO_INTRO,
+            "nointro": Collection.NO_INTRO,
+            "redump": Collection.REDUMP,
+            "mame": Collection.MAME,
+            "tosec": Collection.TOSEC,
+            "arcade": [Collection.MAME, Collection.FBNEO, Collection.TEKNOPARROT],
+        }
+
+        for keyword, collection in collection_keywords.items():
+            if keyword in normalized_query:
+                collections = [collection] if isinstance(collection, Collection) else collection
+                for game in games:
+                    if game.collection in collections:
+                        results.append(SearchResult(
+                            game_file=game,
+                            score=70,
+                            match_type="partial",
+                            matched_field="collection"
+                        ))
+
         return results
     
     def _normalize_text(self, text: str) -> str:
