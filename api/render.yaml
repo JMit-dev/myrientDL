@@ -1,0 +1,16 @@
+# Render Blueprint for automatic deployment
+services:
+  - type: web
+    name: myrientdl-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: cd api && pip install -e .
+    startCommand: cd api && uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: FRONTEND_URL
+        sync: false  # Set manually in Render dashboard
+      - key: PYTHON_VERSION
+        value: 3.11.0
