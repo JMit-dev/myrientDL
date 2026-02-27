@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import asyncio
 
-from .database import DatabaseManager
+from database import DatabaseManager
 
 
 class CrawlService:

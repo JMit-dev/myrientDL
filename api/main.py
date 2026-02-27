@@ -10,8 +10,8 @@ from typing import List, Optional
 from pydantic import BaseModel
 import os
 
-from .database import get_db, DatabaseManager
-from .models import (
+from database import get_db, DatabaseManager
+from models import (
     GameFileResponse,
     CollectionResponse,
     SearchRequest,
@@ -19,7 +19,7 @@ from .models import (
     StatsResponse,
     CrawlStatus,
 )
-from .services import CrawlService, DownloadService, SearchService
+from services import CrawlService, DownloadService, SearchService
 
 # Environment variables
 DATABASE_URL = os.getenv("DATABASE_URL")
