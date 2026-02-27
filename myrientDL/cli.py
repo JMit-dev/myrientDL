@@ -17,7 +17,8 @@ from .database import Database
 from .crawler import MyrientCrawler
 from .downloader import DownloadManager
 from .search import GameSearch, SearchResult
-from .models import GameFile, DownloadStatus
+from .models import GameFile, DownloadStatus, Collection, CollectionInfo, DownloadWarning
+from .verification import TorrentZipVerifier
 
 app = typer.Typer(name="myrient-dl", help="A polite, resumable downloader for Myrient game archive")
 console = Console()
@@ -73,36 +74,58 @@ def init(
 def search(
     query: str = typer.Argument(..., help="Search query (game name, console, etc.)"),
     console_filter: Optional[str] = typer.Option(None, "--console", "-c", help="Filter by console"),
+    collection_filter: Optional[str] = typer.Option(None, "--collection", help="Filter by collection (e.g., No-Intro, Redump)"),
     limit: int = typer.Option(20, "--limit", "-l", help="Maximum number of results"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Configuration file path"),
     interactive: bool = typer.Option(True, "--interactive/--no-interactive", help="Interactive selection mode")
 ):
     """Search for games in the Myrient archive"""
-    asyncio.run(search_command(query, console_filter, limit, config_path, interactive))
+    asyncio.run(search_command(query, console_filter, collection_filter, limit, config_path, interactive))
 
 
 async def search_command(
-    query: str, 
-    console_filter: Optional[str], 
-    limit: int, 
+    query: str,
+    console_filter: Optional[str],
+    collection_filter: Optional[str],
+    limit: int,
     config_path: Optional[Path],
     interactive: bool
 ):
     config = load_config(config_path)
-    
+
     async with Database(config.database_path) as db:
         await db.init_db()
         search_engine = GameSearch(db)
-        
+
         # Check if we have any games in database
         all_games = await db.get_game_files(limit=1)
         if not all_games:
             console.print("[yellow]No games found in database. Run 'myrient-dl crawl' first.[/yellow]")
             return
-        
+
+        # Parse collection filter
+        collection_enum = None
+        if collection_filter:
+            try:
+                collection_enum = Collection(collection_filter)
+            except ValueError:
+                # Try to match by name
+                for c in Collection:
+                    if c.value.lower() == collection_filter.lower():
+                        collection_enum = c
+                        break
+                if not collection_enum:
+                    console.print(f"[red]Unknown collection: {collection_filter}[/red]")
+                    console.print(f"Available collections: {', '.join(c.value for c in Collection)}")
+                    return
+
         # Use direct database search which works better
         db_results = await db.search_games(query, limit)
-        
+
+        # Filter by collection if specified
+        if collection_enum:
+            db_results = [g for g in db_results if g.collection == collection_enum]
+
         # Convert to SearchResult format
         from .search import SearchResult
         results = [SearchResult(
@@ -128,8 +151,8 @@ async def search_command(
         table.add_column("ID", style="cyan", no_wrap=True)
         table.add_column("Game", style="white")
         table.add_column("Console", style="green")
+        table.add_column("Collection", style="bright_blue")
         table.add_column("Size", style="yellow")
-        table.add_column("Score", style="blue")
         table.add_column("Status", style="magenta")
         
         for i, result in enumerate(results, 1):
@@ -146,8 +169,8 @@ async def search_command(
                 str(i),
                 game.name[:50] + "..." if len(game.name) > 50 else game.name,
                 game.console or "Unknown",
+                game.collection.value if game.collection else "Unknown",
                 size_mb,
-                str(result.score),
                 f"[{status_color}]{game.status.value}[/{status_color}]"
             )
         
@@ -337,11 +360,32 @@ async def download_games(games: List[GameFile], config: MyrientConfig):
                 
                 # Start downloads
                 results = await manager.download_batch(games)
-                
+
                 console.print("\n[green]Download Summary:[/green]")
                 console.print(f"  Successful: {results['successful']}")
                 console.print(f"  Failed: {results['failed']}")
                 console.print(f"  Skipped: {results['skipped']}")
+
+                # Display warnings if any
+                warnings = manager.get_warnings()
+                if warnings:
+                    console.print("\n[yellow]⚠ Warnings:[/yellow]")
+                    for warning in warnings:
+                        severity_color = {
+                            "info": "blue",
+                            "warning": "yellow",
+                            "error": "red"
+                        }.get(warning.severity, "white")
+
+                        console.print(f"  [{severity_color}]{warning.message}[/{severity_color}]")
+                        if warning.suggestion:
+                            console.print(f"    [dim]{warning.suggestion}[/dim]")
+
+                # Check for speed throttling
+                if manager.is_speed_throttled():
+                    console.print("\n[red]⚠ Download speed appears to be throttled (~10 KB/s)[/red]")
+                    console.print("[yellow]This may indicate Myrient's abuse detection is active.[/yellow]")
+                    console.print("[dim]Ensure you're downloading directly and not through third-party sites.[/dim]")
 
 
 @app.command()
@@ -455,6 +499,139 @@ async def list_games_command(
             )
         
         console.print(table)
+
+
+@app.command()
+def collections(
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Configuration file path")
+):
+    """List all collections and their statistics"""
+    asyncio.run(collections_command(config_path))
+
+
+async def collections_command(config_path: Optional[Path]):
+    config = load_config(config_path)
+
+    async with Database(config.database_path) as db:
+        await db.init_db()
+
+        # Get all unique collections from database
+        all_collections = await db.get_collections()
+
+        if not all_collections:
+            console.print("[yellow]No collections found in database. Run 'myrient-dl crawl' first.[/yellow]")
+            return
+
+        # Create table
+        table = Table(title="Myrient Collections")
+        table.add_column("Collection", style="cyan")
+        table.add_column("Update Frequency", style="yellow")
+        table.add_column("Content Type", style="green")
+        table.add_column("Games in DB", style="white")
+        table.add_column("Description", style="bright_black")
+
+        for collection_name in sorted(all_collections):
+            try:
+                collection_enum = Collection(collection_name)
+                games = await db.get_games_by_collection(collection_name)
+                info = CollectionInfo.get_collection_details(collection_enum)
+
+                table.add_row(
+                    collection_enum.value,
+                    info.update_frequency,
+                    info.content_type,
+                    str(len(games)),
+                    info.description[:60] + "..." if len(info.description) > 60 else info.description
+                )
+            except ValueError:
+                # Unknown collection
+                games = await db.get_games_by_collection(collection_name)
+                table.add_row(
+                    collection_name,
+                    "Unknown",
+                    "Unknown",
+                    str(len(games)),
+                    "Unknown collection"
+                )
+
+        console.print(table)
+
+
+@app.command()
+def verify(
+    game_ids: Optional[List[int]] = typer.Argument(None, help="Game IDs to verify"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Configuration file path"),
+    all_games: bool = typer.Option(False, "--all", help="Verify all downloaded games")
+):
+    """Verify TorrentZip CRC-32 checksums for downloaded files"""
+    asyncio.run(verify_command(game_ids, config_path, all_games))
+
+
+async def verify_command(
+    game_ids: Optional[List[int]],
+    config_path: Optional[Path],
+    all_games: bool
+):
+    config = load_config(config_path)
+
+    async with Database(config.database_path) as db:
+        await db.init_db()
+
+        # Get games to verify
+        if all_games:
+            games = await db.get_game_files(status=DownloadStatus.COMPLETED)
+        elif game_ids:
+            # Get specific games by ID (need to implement this)
+            console.print("[yellow]Fetching specific games by ID not yet implemented[/yellow]")
+            return
+        else:
+            console.print("[red]Please specify game IDs or use --all[/red]")
+            return
+
+        if not games:
+            console.print("[yellow]No games to verify[/yellow]")
+            return
+
+        verified_count = 0
+        failed_count = 0
+        skipped_count = 0
+
+        with Progress() as progress:
+            task = progress.add_task("[cyan]Verifying files...", total=len(games))
+
+            for game in games:
+                if not game.local_path or not game.local_path.exists():
+                    skipped_count += 1
+                    progress.advance(task)
+                    continue
+
+                # Only verify ZIP files
+                if game.file_type.lower() != 'zip':
+                    skipped_count += 1
+                    progress.advance(task)
+                    continue
+
+                verifier = TorrentZipVerifier()
+                if verifier.is_torrentzipped(game.local_path):
+                    crc = verifier.get_torrentzip_crc32(game.local_path)
+                    if crc:
+                        # Update game metadata
+                        game.is_torrentzipped = True
+                        game.torrentzip_crc32 = crc
+                        await db.update_game_file(game)
+                        verified_count += 1
+                        console.print(f"[green]✓[/green] {game.name}: {crc}")
+                    else:
+                        failed_count += 1
+                        console.print(f"[red]✗[/red] {game.name}: Could not extract CRC")
+                else:
+                    skipped_count += 1
+
+                progress.advance(task)
+
+        console.print(f"\n[green]Verified: {verified_count}[/green]")
+        console.print(f"[yellow]Skipped: {skipped_count}[/yellow]")
+        console.print(f"[red]Failed: {failed_count}[/red]")
 
 
 if __name__ == "__main__":
