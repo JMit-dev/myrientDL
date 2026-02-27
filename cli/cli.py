@@ -12,13 +12,13 @@ from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
 from rich.text import Text
 
-from .config import MyrientConfig
-from .database import Database
-from .crawler import MyrientCrawler
-from .downloader import DownloadManager
-from .search import GameSearch, SearchResult
-from .models import GameFile, DownloadStatus, Collection, CollectionInfo, DownloadWarning
-from .verification import TorrentZipVerifier
+from myrientDL.config import MyrientConfig
+from myrientDL.database import Database
+from myrientDL.crawler import MyrientCrawler
+from myrientDL.downloader import DownloadManager
+from myrientDL.search import GameSearch, SearchResult
+from myrientDL.models import GameFile, DownloadStatus, Collection, CollectionInfo, DownloadWarning
+from myrientDL.verification import TorrentZipVerifier
 
 app = typer.Typer(name="myrient-dl", help="A polite, resumable downloader for Myrient game archive")
 console = Console()

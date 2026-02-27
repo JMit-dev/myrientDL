@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myrientdl-cli"
+version = "0.1.0"
+description = "Command-line interface for MyrientDL game archive downloader"
+readme = "../README.md"
+requires-python = ">=3.9"
+license = {text = "GPL-3.0"}
+authors = [
+    {name = "Jordan Mitacek"}
+]
+
+dependencies = [
+    "typer>=0.12.5",
+    "rich>=13.9.2",
+    "pyyaml>=6.0.2",
+]
+
+[project.scripts]
+myrient-dl = "cli.cli:app"
+
+[tool.setuptools]
+packages = ["cli"]
