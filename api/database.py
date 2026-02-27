@@ -18,8 +18,6 @@ except ImportError:
 import aiosqlite
 from datetime import datetime
 
-from myrientDL.models import GameFile, DownloadStatus, Collection, FileFormat
-
 
 class DatabaseManager:
     """Database manager that works with both PostgreSQL and SQLite"""
