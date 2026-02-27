@@ -5,7 +5,7 @@ services:
     env: python
     region: oregon
     plan: free
-    buildCommand: pip install fastapi uvicorn[standard] pydantic python-dotenv asyncpg aiosqlite httpx selectolax aiofiles anyio
+    buildCommand: pip install ./myrientDL && pip install fastapi uvicorn[standard] pydantic python-dotenv asyncpg aiosqlite
     startCommand: cd api && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL

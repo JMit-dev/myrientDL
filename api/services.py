@@ -1,7 +1,7 @@
 """
 Backend Services
 
-Business logic for crawling, downloading, and searching.
+Business logic for crawling, downloading, and searching using myrientDL.
 """
 
 from typing import List, Optional, Dict, Any
@@ -9,6 +9,10 @@ from datetime import datetime
 import asyncio
 
 from database import DatabaseManager
+from myrientDL.crawler import MyrientCrawler
+from myrientDL.downloader import DownloadManager
+from myrientDL.search import GameSearch
+from myrientDL.config import MyrientConfig
 
 
 class CrawlService:
@@ -22,16 +26,25 @@ class CrawlService:
         self._last_crawl = None
 
     async def start_crawl(self):
-        """Start crawling Myrient (background task)"""
-        # TODO: Implement actual crawling logic using myrientDL crawler
+        """Start crawling Myrient"""
         self._is_running = True
         self._games_found = 0
         self._current_url = "https://myrient.erista.me"
 
         try:
-            # Placeholder - integrate with actual crawler
-            await asyncio.sleep(1)
+            # Create crawler with myrientDL's actual crawler
+            crawler = MyrientCrawler(self.db.db)
+
+            # Crawl the entire site
+            await crawler.crawl_all()
+
+            # Update stats
+            games = await self.db.db.get_all_games()
+            self._games_found = len(games)
             self._last_crawl = datetime.now()
+
+        except Exception as e:
+            print(f"Crawl error: {e}")
         finally:
             self._is_running = False
 
@@ -53,10 +66,16 @@ class DownloadService:
         self.db = db
         self._is_running = False
         self._queue: List[int] = []
+        self._download_manager: Optional[DownloadManager] = None
 
     async def queue_downloads(self, game_ids: List[int]) -> List[int]:
         """Queue games for download"""
-        # TODO: Update game status to pending in database
+        # Mark games as pending in database
+        for game_id in game_ids:
+            game = await self.db.db.get_game(game_id)
+            if game:
+                await self.db.db.update_game_status(game_id, "pending")
+
         self._queue.extend(game_ids)
         return game_ids
 
@@ -65,10 +84,23 @@ class DownloadService:
         self._is_running = True
 
         try:
-            # TODO: Implement actual download logic
+            # Create download manager with default config
+            config = MyrientConfig()
+            self._download_manager = DownloadManager(
+                config=config,
+                database=self.db.db
+            )
+
+            # Process queue
             while self._queue:
                 game_id = self._queue.pop(0)
-                await asyncio.sleep(0.1)
+                game = await self.db.db.get_game(game_id)
+
+                if game:
+                    await self._download_manager.download_game(game)
+
+        except Exception as e:
+            print(f"Download error: {e}")
         finally:
             self._is_running = False
 
@@ -81,7 +113,7 @@ class DownloadService:
         return {
             "is_running": self._is_running,
             "queue_length": len(self._queue),
-            "active_downloads": 0,
+            "active_downloads": 1 if self._is_running and self._queue else 0,
         }
 
 
@@ -90,6 +122,7 @@ class SearchService:
 
     def __init__(self, db: DatabaseManager):
         self.db = db
+        self.search = GameSearch(db.db)
 
     async def search(
         self,
@@ -99,17 +132,16 @@ class SearchService:
         limit: int = 50,
     ) -> List[Dict]:
         """Search for games with fuzzy matching"""
-        # TODO: Implement fuzzy search using existing search module
-        # For now, basic SQL LIKE search
-        games = await self.db.get_games(
+        # Use myrientDL's actual search
+        results = await self.search.search(
+            query=query,
             console=console,
-            collection=collection,
-            limit=limit,
+            limit=limit
         )
 
-        # Filter by query (case-insensitive)
-        if query:
-            query_lower = query.lower()
-            games = [g for g in games if query_lower in g['name'].lower()]
+        # Filter by collection if specified
+        if collection:
+            results = [r for r in results if r.game.collection.value == collection]
 
-        return games[:limit]
+        # Convert to dicts
+        return [self.db._game_to_dict(r.game) for r in results]
