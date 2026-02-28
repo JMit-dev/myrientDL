@@ -117,6 +117,12 @@ async def init_db():
     # Use DATABASE_URL env var if set, otherwise default to SQLite
     db_url = os.getenv("DATABASE_URL", "sqlite:///./myrient.db")
 
+    # Debug logging to help diagnose Render issues
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"DATABASE_URL environment variable: {db_url[:50]}..." if len(db_url) > 50 else f"DATABASE_URL: {db_url}")
+    logger.info(f"Database type detected: {'PostgreSQL' if db_url.startswith(('postgres://', 'postgresql://')) else 'SQLite'}")
+
     # Extract path from URL (handle both sqlite:/// and postgres:// formats)
     if db_url.startswith("sqlite:///"):
         db_path = db_url.replace("sqlite:///", "")
