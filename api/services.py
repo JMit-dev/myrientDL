@@ -34,18 +34,22 @@ class CrawlService:
         CrawlService._current_url = "https://myrient.erista.me"
 
         try:
-            # Create crawler with myrientDL's actual crawler
-            crawler = MyrientCrawler(self.db.db)
+            # Create config with the database
+            config = MyrientConfig(database_path=self.db.db_path)
 
-            # Crawl from root directory (it's an async generator)
-            async for game in crawler.crawl_directory("https://myrient.erista.me"):
-                CrawlService._games_found += 1
-                # Games are automatically added to the database by the crawler
+            # Create crawler with myrientDL's actual crawler
+            async with MyrientCrawler(config) as crawler:
+                # Crawl from root directory (it's an async generator)
+                async for game in crawler.crawl_directory("https://myrient.erista.me"):
+                    CrawlService._games_found += 1
+                    # Games are automatically added to the database by the crawler
 
             CrawlService._last_crawl = datetime.now()
 
         except Exception as e:
+            import traceback
             print(f"Crawl error: {e}")
+            print(traceback.format_exc())
         finally:
             CrawlService._is_running = False
 
