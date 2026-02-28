@@ -8,9 +8,10 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 import os
 
-from database import get_db, DatabaseManager
+from database import get_db, DatabaseManager, init_db, close_db
 from models import (
     GameFileResponse,
     CollectionResponse,
@@ -25,19 +26,37 @@ from services import CrawlService, DownloadService, SearchService
 DATABASE_URL = os.getenv("DATABASE_URL")
 MYRIENT_BASE_URL = os.getenv("MYRIENT_BASE_URL", "https://myrient.erista.me")
 
+
+# Lifespan context manager for startup/shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await init_db()
+    yield
+    # Shutdown
+    await close_db()
+
+
 app = FastAPI(
     title="MyrientDL API",
     description="Backend API for Myrient game archive downloader",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware for Next.js frontend
+frontend_url = os.getenv("FRONTEND_URL", "")
+allowed_origins = [
+    "http://localhost:3000",  # Next.js dev
+    "https://myrient-dl.vercel.app",  # Your Vercel deployment
+]
+
+if frontend_url:
+    allowed_origins.append(frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js dev
-        os.getenv("FRONTEND_URL", "*"),  # Production frontend
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
