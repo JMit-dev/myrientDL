@@ -10,6 +10,12 @@ from typing import List, Optional
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import os
+import traceback
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from database import get_db, DatabaseManager, init_db, close_db
 from models import (
@@ -31,7 +37,12 @@ MYRIENT_BASE_URL = os.getenv("MYRIENT_BASE_URL", "https://myrient.erista.me")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    await init_db()
+    try:
+        await init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        logger.error(traceback.format_exc())
     yield
     # Shutdown
     await close_db()
@@ -75,36 +86,50 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    db = get_db()
+    return {
+        "status": "healthy",
+        "database": "connected" if db else "not_initialized"
+    }
 
 
 # Collections
-@app.get("/api/collections", response_model=List[CollectionResponse])
+@app.get("/api/collections")
 async def get_collections(db: DatabaseManager = Depends(get_db)):
     """Get all collections with game counts"""
-    collections = await db.get_collections_with_stats()
-    return collections
+    try:
+        collections = await db.get_collections_with_stats()
+        return collections
+    except Exception as e:
+        logger.error(f"Error in get_collections: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Search
-@app.post("/api/search", response_model=List[GameFileResponse])
+@app.post("/api/search")
 async def search_games(
     request: SearchRequest,
     db: DatabaseManager = Depends(get_db),
 ):
     """Search for games with fuzzy matching"""
-    search_service = SearchService(db)
-    results = await search_service.search(
-        query=request.query,
-        console=request.console,
-        collection=request.collection,
-        limit=request.limit or 50,
-    )
-    return results
+    try:
+        search_service = SearchService(db)
+        results = await search_service.search(
+            query=request.query,
+            console=request.console,
+            collection=request.collection,
+            limit=request.limit or 50,
+        )
+        return results
+    except Exception as e:
+        logger.error(f"Error in search_games: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Games
-@app.get("/api/games", response_model=List[GameFileResponse])
+@app.get("/api/games")
 async def list_games(
     console: Optional[str] = None,
     collection: Optional[str] = None,
@@ -113,22 +138,34 @@ async def list_games(
     db: DatabaseManager = Depends(get_db),
 ):
     """List games with optional filters"""
-    games = await db.get_games(
-        console=console,
-        collection=collection,
-        limit=limit,
-        offset=offset,
-    )
-    return games
+    try:
+        games = await db.get_games(
+            console=console,
+            collection=collection,
+            limit=limit,
+            offset=offset,
+        )
+        return games
+    except Exception as e:
+        logger.error(f"Error in list_games: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/games/{game_id}", response_model=GameFileResponse)
+@app.get("/api/games/{game_id}")
 async def get_game(game_id: int, db: DatabaseManager = Depends(get_db)):
     """Get a specific game by ID"""
-    game = await db.get_game_by_id(game_id)
-    if not game:
-        raise HTTPException(status_code=404, detail="Game not found")
-    return game
+    try:
+        game = await db.get_game_by_id(game_id)
+        if not game:
+            raise HTTPException(status_code=404, detail="Game not found")
+        return game
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_game: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Crawl
@@ -138,25 +175,37 @@ async def start_crawl(
     db: DatabaseManager = Depends(get_db),
 ):
     """Start crawling Myrient archive (background task)"""
-    crawl_service = CrawlService(db)
+    try:
+        crawl_service = CrawlService(db)
 
-    # Check if crawl is already running
-    status = await crawl_service.get_status()
-    if status.is_running:
-        raise HTTPException(status_code=409, detail="Crawl already in progress")
+        # Check if crawl is already running
+        status = await crawl_service.get_status()
+        if status["is_running"]:  # status is a dict
+            raise HTTPException(status_code=409, detail="Crawl already in progress")
 
-    # Start crawl in background
-    background_tasks.add_task(crawl_service.start_crawl)
+        # Start crawl in background
+        background_tasks.add_task(crawl_service.start_crawl)
 
-    return {"status": "started", "message": "Crawl started in background"}
+        return {"status": "started", "message": "Crawl started in background"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in start_crawl: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/crawl/status", response_model=CrawlStatus)
+@app.get("/api/crawl/status")
 async def get_crawl_status(db: DatabaseManager = Depends(get_db)):
     """Get current crawl status"""
-    crawl_service = CrawlService(db)
-    status = await crawl_service.get_status()
-    return status
+    try:
+        crawl_service = CrawlService(db)
+        status = await crawl_service.get_status()
+        return status
+    except Exception as e:
+        logger.error(f"Error in get_crawl_status: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Download
@@ -167,44 +216,64 @@ async def queue_download(
     db: DatabaseManager = Depends(get_db),
 ):
     """Queue games for download"""
-    download_service = DownloadService(db)
+    try:
+        download_service = DownloadService(db)
 
-    # Queue downloads
-    queued = await download_service.queue_downloads(request.game_ids)
+        # Queue downloads
+        queued = await download_service.queue_downloads(request.game_ids)
 
-    # Start download worker in background if not already running
-    if not download_service.is_running():
-        background_tasks.add_task(download_service.start_worker)
+        # Start download worker in background if not already running
+        if not download_service.is_running():
+            background_tasks.add_task(download_service.start_worker)
 
-    return {
-        "status": "queued",
-        "queued_count": len(queued),
-        "game_ids": queued,
-    }
+        return {
+            "status": "queued",
+            "queued_count": len(queued),
+            "game_ids": queued,
+        }
+    except Exception as e:
+        logger.error(f"Error in queue_download: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/download/status")
 async def get_download_status(db: DatabaseManager = Depends(get_db)):
     """Get download queue status"""
-    download_service = DownloadService(db)
-    status = await download_service.get_status()
-    return status
+    try:
+        download_service = DownloadService(db)
+        status = await download_service.get_status()
+        return status
+    except Exception as e:
+        logger.error(f"Error in get_download_status: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Stats
-@app.get("/api/stats", response_model=StatsResponse)
+@app.get("/api/stats")
 async def get_stats(db: DatabaseManager = Depends(get_db)):
     """Get overall statistics"""
-    stats = await db.get_stats()
-    return stats
+    try:
+        stats = await db.get_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Error in get_stats: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Consoles
-@app.get("/api/consoles", response_model=List[str])
+@app.get("/api/consoles")
 async def get_consoles(db: DatabaseManager = Depends(get_db)):
     """Get list of all consoles"""
-    consoles = await db.get_consoles()
-    return consoles
+    try:
+        consoles = await db.get_consoles()
+        return consoles
+    except Exception as e:
+        logger.error(f"Error in get_consoles: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
