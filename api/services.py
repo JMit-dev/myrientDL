@@ -122,7 +122,7 @@ class SearchService:
 
     def __init__(self, db: DatabaseManager):
         self.db = db
-        self.search = GameSearch(db.db)
+        self.game_search = GameSearch(db.db)
 
     async def search(
         self,
@@ -133,7 +133,7 @@ class SearchService:
     ) -> List[Dict]:
         """Search for games with fuzzy matching"""
         # Use myrientDL's actual search
-        results = await self.search.search(
+        results = await self.game_search.search(
             query=query,
             console=console,
             limit=limit
