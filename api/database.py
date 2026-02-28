@@ -16,17 +16,24 @@ class DatabaseManager:
     """Wrapper around myrientDL's Database for API use"""
 
     def __init__(self, db_path: str = "./myrient.db"):
-        self.db_path = Path(db_path)
+        # Don't convert to Path if it's a PostgreSQL connection string
+        if isinstance(db_path, str) and db_path.startswith('postgresql://'):
+            self.db_path = db_path  # Keep as string for PostgreSQL
+        else:
+            self.db_path = Path(db_path)  # Convert to Path for SQLite
+
         self.db = Database(self.db_path)
 
     async def connect(self):
         """Initialize database connection (creates tables if needed)"""
-        # myrient's DB doesn't need async init, tables created on first use
-        pass
+        # Initialize database tables
+        await self.db.init_db()
 
     async def disconnect(self):
         """Close database connection"""
-        pass
+        # Close PostgreSQL connection pool if exists
+        if hasattr(self.db, '_pool') and self.db._pool:
+            await self.db._pool.close()
 
     async def get_games(
         self,
