@@ -36,7 +36,8 @@ class DatabaseManager:
         offset: int = 0
     ) -> List[Dict]:
         """Get games with filters"""
-        games = await self.db.get_all_games()
+        # Use correct method name: get_game_files not get_all_games
+        games = await self.db.get_game_files()
 
         # Filter by console
         if console:
@@ -54,7 +55,8 @@ class DatabaseManager:
 
     async def get_game_by_id(self, game_id: int) -> Optional[Dict]:
         """Get game by ID"""
-        game = await self.db.get_game(game_id)
+        # Use correct method name: get_game_file not get_game
+        game = await self.db.get_game_file(game_id)
         return self._game_to_dict(game) if game else None
 
     async def get_collections_with_stats(self) -> List[Dict]:
@@ -78,35 +80,13 @@ class DatabaseManager:
 
     async def get_consoles(self) -> List[str]:
         """Get list of unique consoles"""
-        games = await self.db.get_all_games()
-        consoles = set(g.console for g in games if g.console)
-        return sorted(list(consoles))
+        consoles = await self.db.get_consoles()
+        return consoles
 
     async def get_stats(self) -> Dict[str, Any]:
         """Get overall statistics"""
-        games = await self.db.get_all_games()
-
-        total_games = len(games)
-        downloaded_games = len([g for g in games if g.status.value == "completed"])
-        pending_games = len([g for g in games if g.status.value == "pending"])
-        failed_games = len([g for g in games if g.status.value == "failed"])
-
-        total_size = sum(g.size or 0 for g in games)
-        downloaded_size = sum(g.bytes_downloaded for g in games if g.status.value == "completed")
-
-        collections = await self.db.get_collections()
-        consoles = await self.get_consoles()
-
-        return {
-            "total_games": total_games,
-            "total_size": total_size,
-            "downloaded_games": downloaded_games,
-            "downloaded_size": downloaded_size,
-            "pending_games": pending_games,
-            "failed_games": failed_games,
-            "collections_count": len(collections),
-            "consoles_count": len(consoles),
-        }
+        stats = await self.db.get_stats()
+        return stats
 
     def _game_to_dict(self, game: GameFile) -> Dict:
         """Convert GameFile to dict for API response"""
