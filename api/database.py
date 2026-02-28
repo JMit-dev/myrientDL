@@ -120,9 +120,12 @@ async def init_db():
     # Extract path from URL (handle both sqlite:/// and postgres:// formats)
     if db_url.startswith("sqlite:///"):
         db_path = db_url.replace("sqlite:///", "")
+    elif db_url.startswith("postgres://") or db_url.startswith("postgresql://"):
+        # PostgreSQL connection string - pass as-is to Database
+        # Convert postgres:// to postgresql:// if needed (Supabase uses postgres://)
+        db_path = db_url.replace("postgres://", "postgresql://")
     else:
-        # For PostgreSQL, we'll need to use SQLite locally for now
-        # TODO: Implement PostgreSQL support in myrientDL.database
+        # Default to SQLite
         db_path = "./myrient.db"
 
     _db_manager = DatabaseManager(db_path)
