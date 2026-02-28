@@ -35,12 +35,11 @@ class CrawlService:
             # Create crawler with myrientDL's actual crawler
             crawler = MyrientCrawler(self.db.db)
 
-            # Crawl the entire site
-            await crawler.crawl_all()
+            # Crawl from root directory (it's an async generator)
+            async for game in crawler.crawl_directory("https://myrient.erista.me"):
+                self._games_found += 1
+                # Games are automatically added to the database by the crawler
 
-            # Update stats
-            games = await self.db.db.get_all_games()
-            self._games_found = len(games)
             self._last_crawl = datetime.now()
 
         except Exception as e:
