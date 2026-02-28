@@ -39,8 +39,8 @@ class CrawlService:
 
             # Create crawler with myrientDL's actual crawler
             async with MyrientCrawler(config) as crawler:
-                # Crawl from root directory (it's an async generator)
-                async for game in crawler.crawl_directory("https://myrient.erista.me"):
+                # Crawl from root directory with unlimited depth (it's an async generator)
+                async for game in crawler.crawl_directory("https://myrient.erista.me", max_depth=999):
                     CrawlService._games_found += 1
                     # Games are automatically added to the database by the crawler
 
